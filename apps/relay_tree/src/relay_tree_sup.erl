@@ -1,6 +1,8 @@
 
 -module(relay_tree_sup).
 
+%% Supervises the HTTP listener and the relay-tree manager.
+
 -behaviour(supervisor).
 
 -export([

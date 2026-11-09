@@ -1,6 +1,8 @@
 
 -module(relay_tree_app).
 
+%% OTP application callback that starts dependencies before the supervisor.
+
 -behaviour(application).
 
 -export([

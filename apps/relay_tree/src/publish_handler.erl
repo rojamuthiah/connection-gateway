@@ -1,6 +1,8 @@
 
 -module(publish_handler).
 
+%% Accepts bounded HTTP messages and forwards them to the relay tree.
+
 -export([init/2]).
 
 -define(MAX_BODY_SIZE, 1048576).
@@ -50,7 +52,7 @@ read_and_publish(Req0, State) ->
     end.
 
 publish(Message, Req, State) ->
-    case catch relay_tree:broadcast(Message) of
+    try relay_tree:broadcast(Message) of
         ok ->
             reply(
                 202,
@@ -58,15 +60,22 @@ publish(Message, Req, State) ->
                 Req,
                 State
             );
-
-        _ ->
-            reply(
-                503,
-                <<"{\"error\":\"relay_tree_unavailable\"}">>,
-                Req,
-                State
-            )
+        {error, Reason} ->
+            logger:error("Could not publish message: ~p", [Reason]),
+            unavailable(Req, State)
+    catch
+        exit:Reason ->
+            logger:error("Relay tree call failed while publishing: ~p", [Reason]),
+            unavailable(Req, State)
     end.
+
+unavailable(Req, State) ->
+    reply(
+        503,
+        <<"{\"error\":\"relay_tree_unavailable\"}">>,
+        Req,
+        State
+    ).
 
 reply(Status, Body, Req, State) ->
     Req1 = cowboy_req:reply(

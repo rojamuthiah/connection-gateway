@@ -1,9 +1,12 @@
 
 -module(http_server).
 
+%% Owns the Cowboy listener and keeps route definitions in one place.
+
 -export([start_link/0]).
 
 start_link() ->
+    %% Keep endpoint-to-handler mappings together for easy API discovery.
     Dispatch = cowboy_router:compile([
         {'_', [
             {"/health", http_handler, []},

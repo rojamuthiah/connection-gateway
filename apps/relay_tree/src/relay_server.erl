@@ -1,6 +1,9 @@
 
 -module(relay_server).
 
+%% A single relay worker: maintains its local topology and forwards messages
+%% to connected clients and child relays.
+
 -behaviour(gen_server).
 
 -export([
@@ -24,41 +27,50 @@
     code_change/3
 ]).
 
-%% ==========================================
-%% Public API
-%% ==========================================
+-type relay_state() :: #{
+    id := term(),
+    parent := pid() | undefined,
+    children := [pid()],
+    clients := #{pid() => reference()}
+}.
 
+-spec start(term()) -> {ok, pid()} | ignore | {error, term()}.
 start(Id) ->
     gen_server:start(?MODULE, Id, []).
 
+-spec start_link(term()) -> {ok, pid()} | ignore | {error, term()}.
 start_link(Id) ->
     gen_server:start_link(?MODULE, Id, []).
 
+-spec get_state(pid()) -> relay_state().
 get_state(Pid) ->
     gen_server:call(Pid, get_state).
 
+-spec set_parent(pid(), pid() | undefined) -> ok.
 set_parent(Pid, ParentPid) ->
     gen_server:call(Pid, {set_parent, ParentPid}).
 
+-spec add_child(pid(), pid()) -> ok.
 add_child(Pid, ChildPid) ->
     gen_server:call(Pid, {add_child, ChildPid}).
 
+-spec remove_child(pid(), pid()) -> ok.
 remove_child(Pid, ChildPid) ->
     gen_server:call(Pid, {remove_child, ChildPid}).
 
+-spec add_client(pid(), pid()) -> ok | {error, term()}.
 add_client(Pid, ClientPid) ->
     gen_server:call(Pid, {add_client, ClientPid}).
 
+-spec remove_client(pid(), pid()) -> ok.
 remove_client(Pid, ClientPid) ->
     gen_server:call(Pid, {remove_client, ClientPid}).
 
+-spec broadcast(pid(), term()) -> ok.
 broadcast(Pid, Message) ->
     gen_server:cast(Pid, {broadcast, Message}).
 
-%% ==========================================
-%% Initialization
-%% ==========================================
-
+-spec init(term()) -> {ok, relay_state()}.
 init(Id) ->
     State = #{
         id => Id,
@@ -69,14 +81,10 @@ init(Id) ->
 
     {ok, State}.
 
-%% ==========================================
-%% Synchronous Requests
-%% ==========================================
-
+-spec handle_call(term(), term(), relay_state()) ->
+    {reply, term(), relay_state()}.
 handle_call(get_state, _From, State) ->
     {reply, State, State};
-
-%% Update parent relay
 
 handle_call({set_parent, ParentPid}, _From, State) ->
     NewState = State#{
@@ -84,8 +92,6 @@ handle_call({set_parent, ParentPid}, _From, State) ->
     },
 
     {reply, ok, NewState};
-
-%% Add child relay
 
 handle_call({add_child, ChildPid}, _From, State) ->
     Children = maps:get(children, State),
@@ -105,8 +111,6 @@ handle_call({add_child, ChildPid}, _From, State) ->
 
     {reply, ok, NewState};
 
-%% Remove child relay
-
 handle_call({remove_child, ChildPid}, _From, State) ->
     Children = maps:get(children, State),
 
@@ -120,8 +124,6 @@ handle_call({remove_child, ChildPid}, _From, State) ->
     },
 
     {reply, ok, NewState};
-
-%% Register WebSocket client and monitor it
 
 handle_call({add_client, ClientPid}, _From, State)
     when is_pid(ClientPid) ->
@@ -155,8 +157,6 @@ handle_call({add_client, ClientPid}, _From, State)
             end
     end;
 
-%% Explicitly remove WebSocket client
-
 handle_call({remove_client, ClientPid}, _From, State) ->
     Clients = maps:get(clients, State),
 
@@ -180,12 +180,7 @@ handle_call({remove_client, ClientPid}, _From, State) ->
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
-%% ==========================================
-%% Broadcast Handling
-%% ==========================================
-
-%% Root receives broadcast through gen_server:cast
-
+-spec handle_cast(term(), relay_state()) -> {noreply, relay_state()}.
 handle_cast({broadcast, Message}, State) ->
     forward_message(Message, State),
 
@@ -194,16 +189,11 @@ handle_cast({broadcast, Message}, State) ->
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-%% Child relays receive broadcast through process messages
-
+-spec handle_info(term(), relay_state()) -> {noreply, relay_state()}.
 handle_info({broadcast, Message}, State) ->
     forward_message(Message, State),
 
     {noreply, State};
-
-%% ==========================================
-%% Client Disconnection Detection
-%% ==========================================
 
 handle_info(
     {'DOWN', MonitorRef, process, ClientPid, Reason},
@@ -214,8 +204,8 @@ handle_info(
 
     case maps:find(ClientPid, Clients) of
         {ok, MonitorRef} ->
-            io:format(
-                "Client ~p disconnected. Reason: ~p~n",
+            logger:info(
+                "Client ~p disconnected. Reason: ~p",
                 [ClientPid, Reason]
             ),
 
@@ -237,22 +227,17 @@ handle_info(
 handle_info(_Info, State) ->
     {noreply, State}.
 
-%% ==========================================
-%% Message Propagation
-%% ==========================================
-
+-spec forward_message(term(), relay_state()) -> ok.
 forward_message(Message, State) ->
 
     RelayId = maps:get(id, State),
     Children = maps:get(children, State),
     Clients = maps:get(clients, State),
 
-    io:format(
-        "Relay ~p processing message: ~p~n",
+    logger:debug(
+        "Relay ~p processing message: ~p",
         [RelayId, Message]
     ),
-
-    %% Deliver message to connected WebSocket clients
 
     maps:foreach(
         fun(ClientPid, _MonitorRef) ->
@@ -260,8 +245,6 @@ forward_message(Message, State) ->
         end,
         Clients
     ),
-
-    %% Forward message to child relays
 
     lists:foreach(
         fun(ChildPid) ->
@@ -272,12 +255,10 @@ forward_message(Message, State) ->
 
     ok.
 
-%% ==========================================
-%% Termination
-%% ==========================================
-
+-spec terminate(term(), relay_state()) -> ok.
 terminate(_Reason, _State) ->
     ok.
 
+-spec code_change(term(), relay_state(), term()) -> {ok, relay_state()}.
 code_change(_OldVersion, State, _Extra) ->
     {ok, State}.
