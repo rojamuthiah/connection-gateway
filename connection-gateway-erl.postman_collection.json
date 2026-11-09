@@ -1,0 +1,138 @@
+{
+  "info": {
+    "_postman_id": "76a96077-802a-4b55-a14f-8941123c7dd9",
+    "name": "Connection Gateway - Erlang",
+    "description": "HTTP requests for creating and inspecting the Erlang relay tree and publishing messages.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "erl-create-tree",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"layers\": 4\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tree/create",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tree",
+            "create"
+          ]
+        },
+        "description": "Create or replace the relay tree. Layers must be an integer from 0 to 10."
+      },
+      "response": []
+    },
+    {
+      "name": "erl-get-tree",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tree",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tree"
+          ]
+        },
+        "description": "Get the root PID and relay and leaf counts."
+      },
+      "response": []
+    },
+    {
+      "name": "erl-get-all-relays",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tree/relays",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tree",
+            "relays"
+          ]
+        },
+        "description": "List all relays, including their IDs, PIDs, levels, parents, and children."
+      },
+      "response": []
+    },
+    {
+      "name": "erl-get-all-leaves",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tree/leaves",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "tree",
+            "leaves"
+          ]
+        },
+        "description": "List the current leaf relays."
+      },
+      "response": []
+    },
+    {
+      "name": "erl-publish",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "text/plain"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "Hello from Erlang",
+          "options": {
+            "raw": {
+              "language": "text"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/publish",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "publish"
+          ]
+        },
+        "description": "Publish a non-empty text message to the relay tree."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ]
+}

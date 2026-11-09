@@ -26,6 +26,26 @@ The HTTP API is:
 * `POST /publish` broadcasts a non-empty request body (up to 1 MiB).
 * `GET /ws` upgrades to a WebSocket that receives published messages as text
   frames. Client frames are ignored.
+* `POST /tree/create` creates a tree. Send a JSON body such as
+  `{"layers": 4}`; `layers` must be between 0 and 10.
+* `GET /tree` returns the root PID and relay/leaf counts.
+* `GET /tree/relays` returns relay IDs, PIDs, levels, parents, and children.
+* `GET /tree/leaves` returns the leaf relay details.
+
+The tree-management endpoints use Erlang/OTP's standard `json` module and
+therefore require OTP 27 or later.
+
+The HTTP listener reads its port from the `PORT` environment variable and
+defaults to `8000` when it is unset. `.env.example` documents the setting; it
+is a template and is not loaded automatically by Erlang. Set the variable in
+the shell before starting the application, for example in PowerShell:
+
+    $env:PORT = "8000"
+    rebar3 shell
+
+Import `connection-gateway-erl.postman_collection.json` into Postman to create
+requests for the tree-management and publish endpoints. Its `baseUrl` variable
+defaults to `http://localhost:8000`.
 
 Build
 -----
