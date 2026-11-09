@@ -19,6 +19,9 @@ Application source is under `apps/relay_tree/src/`:
 * `http_handler`, `publish_handler`, and `websocket_handler` implement the
   health check, publish endpoint, and WebSocket endpoint respectively.
 * `relay_tree_app` and `relay_tree_sup` start and supervise the application.
+* `apps/connection_gateway/src/` contains the separate channel-based gateway
+  application. Its channel manager owns channel membership, generated
+  connection IDs, and the per-channel designated workload subscriber.
 
 The HTTP API is:
 
@@ -35,17 +38,38 @@ The HTTP API is:
 The tree-management endpoints use Erlang/OTP's standard `json` module and
 therefore require OTP 27 or later.
 
-The HTTP listener reads its port from the `PORT` environment variable and
-defaults to `8000` when it is unset. `.env.example` documents the setting; it
-is a template and is not loaded automatically by Erlang. Set the variable in
-the shell before starting the application, for example in PowerShell:
+### Channel gateway protocol
+
+The separate `connection_gateway` application implements:
+
+* `POST /channels` with `{"channelId":"stream-101"}` to create a channel.
+* `GET /ws` for WebSocket `subscribe`, `publish_normal`, and `publish_bad`
+  messages. Subscribe with
+  `{"type":"subscribe","channelId":"stream-101"}`; the response includes the
+  server-generated connection ID.
+* The server generates each `connectionId` when its WebSocket connects.
+  A successful subscription returns it in a `subscribed` message.
+* Both `publish_normal` and `publish_bad` are broadcast as `message` events to
+  every other subscriber in the channel; the publisher does not receive its
+  own message.
+* A `publish_bad` message also runs a fixed one-million-iteration CPU task in
+  exactly one other subscriber's WebSocket process. If the channel's
+  designated subscriber is the publisher, another subscriber is selected.
+  Further bad publishes to that channel are rejected while its current task
+  runs, but the publish message is still broadcast to the other subscribers.
+
+The relay-tree listener reads `PORT` and defaults to `8000`. The channel
+gateway reads `CONNECTION_GATEWAY_PORT` and defaults to `8080`. `.env.example`
+documents both values. Erlang does not load `.env` automatically; when using a
+local `.env`, pass it to Rebar3:
 
     $env:PORT = "8000"
-    rebar3 shell
+    rebar3 shell --env-file .env
 
-Import `connection-gateway-erl.postman_collection.json` into Postman to create
-requests for the tree-management and publish endpoints. Its `baseUrl` variable
-defaults to `http://localhost:8000`.
+`rebar.config` configures the shell to start both OTP applications. Import
+`connection-gateway-erl.postman_collection.json` into Postman for the relay
+tree API and `connection-gateway-channels.postman_collection.json` for the
+channel gateway.
 
 Build
 -----

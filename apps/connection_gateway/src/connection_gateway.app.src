@@ -1,0 +1,19 @@
+{application, connection_gateway, [
+    {description, "Channel-based WebSocket connection gateway"},
+    {vsn, "0.1.0"},
+    {registered, [
+        connection_gateway_sup,
+        connection_gateway_http_server,
+        connection_gateway_manager
+    ]},
+    {mod, {connection_gateway_app, []}},
+    {applications, [
+        kernel,
+        stdlib,
+        cowboy
+    ]},
+    {env, []},
+    {modules, []},
+    {licenses, ["Apache-2.0"]},
+    {links, []}
+]}.

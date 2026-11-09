@@ -1,0 +1,49 @@
+{
+  "info": {
+    "_postman_id": "71e50ef2-7f78-4b89-81d0-76a84c2d11b2",
+    "name": "Connection Gateway - Erlang Channels",
+    "description": "HTTP requests for the Erlang connection_gateway app. Use a separate Postman WebSocket request to connect to ws://localhost:8080/ws.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "erl-create-channel",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"channelId\": \"stream-101\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/channels",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "channels"
+          ]
+        },
+        "description": "Create a channel before subscribing. Expected response: {\"status\":\"created\",\"channelId\":\"stream-101\"}."
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ]
+}
