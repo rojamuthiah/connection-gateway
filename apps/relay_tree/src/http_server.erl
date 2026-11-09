@@ -6,7 +6,9 @@
 start_link() ->
     Dispatch = cowboy_router:compile([
         {'_', [
-            {"/health", http_handler, []}
+            {"/health", http_handler, []},
+            {"/publish", publish_handler, []},
+            {"/ws", websocket_handler, []}
         ]}
     ]),
 

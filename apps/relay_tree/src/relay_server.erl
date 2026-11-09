@@ -24,7 +24,9 @@
     code_change/3
 ]).
 
+%% ==========================================
 %% Public API
+%% ==========================================
 
 start(Id) ->
     gen_server:start(?MODULE, Id, []).
@@ -53,85 +55,194 @@ remove_client(Pid, ClientPid) ->
 broadcast(Pid, Message) ->
     gen_server:cast(Pid, {broadcast, Message}).
 
+%% ==========================================
 %% Initialization
+%% ==========================================
 
 init(Id) ->
     State = #{
         id => Id,
         parent => undefined,
         children => [],
-        clients => []
+        clients => #{}
     },
+
     {ok, State}.
 
-%% Synchronous requests
+%% ==========================================
+%% Synchronous Requests
+%% ==========================================
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
 
+%% Update parent relay
+
 handle_call({set_parent, ParentPid}, _From, State) ->
-    {reply, ok, State#{parent => ParentPid}};
+    NewState = State#{
+        parent => ParentPid
+    },
+
+    {reply, ok, NewState};
+
+%% Add child relay
 
 handle_call({add_child, ChildPid}, _From, State) ->
     Children = maps:get(children, State),
 
     NewChildren =
         case lists:member(ChildPid, Children) of
-            true -> Children;
-            false -> Children ++ [ChildPid]
+            true ->
+                Children;
+
+            false ->
+                Children ++ [ChildPid]
         end,
 
-    {reply, ok, State#{children => NewChildren}};
+    NewState = State#{
+        children => NewChildren
+    },
+
+    {reply, ok, NewState};
+
+%% Remove child relay
 
 handle_call({remove_child, ChildPid}, _From, State) ->
     Children = maps:get(children, State),
-    NewChildren = lists:delete(ChildPid, Children),
 
-    {reply, ok, State#{children => NewChildren}};
+    NewChildren = lists:delete(
+        ChildPid,
+        Children
+    ),
+
+    NewState = State#{
+        children => NewChildren
+    },
+
+    {reply, ok, NewState};
+
+%% Register WebSocket client and monitor it
 
 handle_call({add_client, ClientPid}, _From, State)
     when is_pid(ClientPid) ->
 
     Clients = maps:get(clients, State),
 
-    NewClients =
-        case lists:member(ClientPid, Clients) of
-            true -> Clients;
-            false -> Clients ++ [ClientPid]
-        end,
+    case maps:is_key(ClientPid, Clients) of
+        true ->
+            {reply, ok, State};
 
-    {reply, ok, State#{clients => NewClients}};
+        false ->
+            case is_process_alive(ClientPid) of
+                false ->
+                    {reply, {error, client_not_alive}, State};
+
+                true ->
+                    MonitorRef = erlang:monitor(
+                        process,
+                        ClientPid
+                    ),
+
+                    NewClients = Clients#{
+                        ClientPid => MonitorRef
+                    },
+
+                    NewState = State#{
+                        clients => NewClients
+                    },
+
+                    {reply, ok, NewState}
+            end
+    end;
+
+%% Explicitly remove WebSocket client
 
 handle_call({remove_client, ClientPid}, _From, State) ->
     Clients = maps:get(clients, State),
-    NewClients = lists:delete(ClientPid, Clients),
 
-    {reply, ok, State#{clients => NewClients}};
+    case maps:take(ClientPid, Clients) of
+        error ->
+            {reply, ok, State};
+
+        {MonitorRef, RemainingClients} ->
+            erlang:demonitor(
+                MonitorRef,
+                [flush]
+            ),
+
+            NewState = State#{
+                clients => RemainingClients
+            },
+
+            {reply, ok, NewState}
+    end;
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
-%% Asynchronous broadcast initiated through gen_server:cast
+%% ==========================================
+%% Broadcast Handling
+%% ==========================================
+
+%% Root receives broadcast through gen_server:cast
 
 handle_cast({broadcast, Message}, State) ->
     forward_message(Message, State),
+
     {noreply, State};
 
 handle_cast(_Request, State) ->
     {noreply, State}.
 
-%% Messages received directly from parent relays
+%% Child relays receive broadcast through process messages
 
 handle_info({broadcast, Message}, State) ->
     forward_message(Message, State),
+
     {noreply, State};
+
+%% ==========================================
+%% Client Disconnection Detection
+%% ==========================================
+
+handle_info(
+    {'DOWN', MonitorRef, process, ClientPid, Reason},
+    State
+) ->
+
+    Clients = maps:get(clients, State),
+
+    case maps:find(ClientPid, Clients) of
+        {ok, MonitorRef} ->
+            io:format(
+                "Client ~p disconnected. Reason: ~p~n",
+                [ClientPid, Reason]
+            ),
+
+            NewClients = maps:remove(
+                ClientPid,
+                Clients
+            ),
+
+            NewState = State#{
+                clients => NewClients
+            },
+
+            {noreply, NewState};
+
+        _ ->
+            {noreply, State}
+    end;
 
 handle_info(_Info, State) ->
     {noreply, State}.
 
-%% Deliver to clients and forward to child relays
+%% ==========================================
+%% Message Propagation
+%% ==========================================
 
 forward_message(Message, State) ->
+
     RelayId = maps:get(id, State),
     Children = maps:get(children, State),
     Clients = maps:get(clients, State),
@@ -141,15 +252,17 @@ forward_message(Message, State) ->
         [RelayId, Message]
     ),
 
-    %% Deliver to connected clients
-    lists:foreach(
-        fun(ClientPid) ->
+    %% Deliver message to connected WebSocket clients
+
+    maps:foreach(
+        fun(ClientPid, _MonitorRef) ->
             ClientPid ! {comment, Message}
         end,
         Clients
     ),
 
-    %% Forward to child relays
+    %% Forward message to child relays
+
     lists:foreach(
         fun(ChildPid) ->
             ChildPid ! {broadcast, Message}
@@ -158,6 +271,10 @@ forward_message(Message, State) ->
     ),
 
     ok.
+
+%% ==========================================
+%% Termination
+%% ==========================================
 
 terminate(_Reason, _State) ->
     ok.
