@@ -40,7 +40,7 @@ start_link() ->
     end.
 
 listener_port() ->
-    case os:getenv("PORT") of
+    case os:getenv("RELAY_TREE_PORT") of
         false ->
             {ok, ?DEFAULT_PORT};
         PortString ->
@@ -52,5 +52,5 @@ parse_port(PortString) ->
         {Port, []} when Port >= 1, Port =< 65535 ->
             {ok, Port};
         _ ->
-            {error, {invalid_port, PortString}}
+            {error, {invalid_relay_tree_port, PortString}}
     end.

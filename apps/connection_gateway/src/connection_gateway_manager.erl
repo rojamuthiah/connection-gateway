@@ -7,9 +7,9 @@
     create_channel/1,
     register_connection/1,
     subscribe/2,
+    validate_publish/2,
     publish_normal/3,
     publish_bad/3,
-    complete_bad_workload/3,
     disconnect/1
 ]).
 
@@ -23,16 +23,14 @@
 ]).
 
 -type channel() :: #{
-    members := #{pid() => true},
-    designated := pid() | undefined
+    members := #{pid() => true}
 }.
 -type state() :: #{
     channels := #{binary() => channel()},
     connections := #{binary() => pid()},
     connection_ids := #{pid() => binary()},
     monitors := #{reference() => pid()},
-    pid_monitors := #{pid() => reference()},
-    busy_channels := #{binary() => pid()}
+    pid_monitors := #{pid() => reference()}
 }.
 
 -spec start_link() -> {ok, pid()} | ignore | {error, term()}.
@@ -51,6 +49,10 @@ register_connection(Pid) ->
 subscribe(ChannelId, Pid) ->
     gen_server:call(?MODULE, {subscribe, ChannelId, Pid}).
 
+-spec validate_publish(binary(), pid()) -> ok | {error, term()}.
+validate_publish(ChannelId, Pid) ->
+    gen_server:call(?MODULE, {validate_publish, ChannelId, Pid}).
+
 -spec publish_normal(binary(), pid(), binary()) -> ok | {error, term()}.
 publish_normal(ChannelId, Pid, Message) ->
     gen_server:call(?MODULE, {publish_normal, ChannelId, Pid, Message}).
@@ -58,13 +60,6 @@ publish_normal(ChannelId, Pid, Message) ->
 -spec publish_bad(binary(), pid(), binary()) -> ok | {error, term()}.
 publish_bad(ChannelId, Pid, Message) ->
     gen_server:call(?MODULE, {publish_bad, ChannelId, Pid, Message}).
-
--spec complete_bad_workload(binary(), pid(), non_neg_integer()) -> ok.
-complete_bad_workload(ChannelId, Pid, Checksum) ->
-    gen_server:cast(
-        ?MODULE,
-        {complete_bad_workload, ChannelId, Pid, Checksum}
-    ).
 
 -spec disconnect(pid()) -> ok.
 disconnect(Pid) ->
@@ -77,8 +72,7 @@ init([]) ->
         connections => #{},
         connection_ids => #{},
         monitors => #{},
-        pid_monitors => #{},
-        busy_channels => #{}
+        pid_monitors => #{}
     }}.
 
 -spec handle_call(term(), term(), state()) -> {reply, term(), state()}.
@@ -88,7 +82,7 @@ handle_call({create_channel, ChannelId}, _From, State) ->
         true ->
             {reply, {error, already_exists}, State};
         false ->
-            Channel = #{members => #{}, designated => undefined},
+            Channel = #{members => #{}},
             {reply, ok, State#{channels => Channels#{ChannelId => Channel}}}
     end;
 
@@ -103,6 +97,14 @@ handle_call({register_connection, Pid}, _From, State)
 
 handle_call({subscribe, ChannelId, Pid}, _From, State) ->
     subscribe_connection(ChannelId, Pid, State);
+
+handle_call({validate_publish, ChannelId, Pid}, _From, State) ->
+    case subscribed_channel(ChannelId, Pid, State) of
+        {ok, _Channel} ->
+            {reply, ok, State};
+        {error, Reason} ->
+            {reply, {error, Reason}, State}
+    end;
 
 handle_call(
     {publish_normal, ChannelId, Pid, Message},
@@ -135,7 +137,7 @@ handle_call(
                 <<"message">> => Message
             })),
             broadcast_to_subscribers(Channel, Pid, Event),
-            schedule_bad_workload(ChannelId, Channel, Pid, State);
+            {reply, ok, State};
         {error, Reason} ->
             {reply, {error, Reason}, State}
     end;
@@ -147,23 +149,6 @@ handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
 -spec handle_cast(term(), state()) -> {noreply, state()}.
-handle_cast(
-    {complete_bad_workload, ChannelId, Pid, Checksum},
-    State
-) ->
-    BusyChannels = maps:get(busy_channels, State),
-    case maps:find(ChannelId, BusyChannels) of
-        {ok, Pid} ->
-            logger:debug(
-                "Bad workload completed for channel ~p on ~p (checksum ~p)",
-                [ChannelId, Pid, Checksum]
-            ),
-            {noreply, State#{
-                busy_channels => maps:remove(ChannelId, BusyChannels)
-            }};
-        _ ->
-            {noreply, State}
-    end;
 handle_cast(_Request, State) ->
     {noreply, State}.
 
@@ -220,14 +205,8 @@ subscribe_connection(ChannelId, Pid, State) ->
             {reply, {error, unknown_connection}, State};
         {{ok, Channel}, {ok, ConnectionId}} ->
             Members = maps:get(members, Channel),
-            Designated =
-                case maps:get(designated, Channel) of
-                    undefined -> Pid;
-                    Existing -> Existing
-                end,
             UpdatedChannel = Channel#{
-                members => Members#{Pid => true},
-                designated => Designated
+                members => Members#{Pid => true}
             },
             {reply, {ok, ConnectionId}, State#{
                 channels => Channels#{ChannelId => UpdatedChannel}
@@ -245,21 +224,6 @@ subscribed_channel(ChannelId, Pid, State) ->
             end
     end.
 
-schedule_bad_workload(ChannelId, Channel, PublisherPid, State) ->
-    Designated = workload_subscriber(Channel, PublisherPid),
-    BusyChannels = maps:get(busy_channels, State),
-    case {Designated, maps:is_key(ChannelId, BusyChannels)} of
-        {undefined, _} ->
-            {reply, {error, no_designated_subscriber}, State};
-        {_Pid, true} ->
-            {reply, {error, workload_in_progress}, State};
-        {Pid, false} ->
-            Pid ! {run_bad_workload, ChannelId},
-            {reply, ok, State#{
-                busy_channels => BusyChannels#{ChannelId => Pid}
-            }}
-    end.
-
 broadcast_to_subscribers(Channel, PublisherPid, Event) ->
     maps:foreach(
         fun(ConnectionPid, _Present) when ConnectionPid =/= PublisherPid ->
@@ -269,27 +233,6 @@ broadcast_to_subscribers(Channel, PublisherPid, Event) ->
         end,
         maps:get(members, Channel)
     ).
-
-workload_subscriber(Channel, PublisherPid) ->
-    Designated = maps:get(designated, Channel),
-    Members = maps:get(members, Channel),
-    case Designated =/= PublisherPid
-        andalso maps:is_key(Designated, Members)
-        andalso is_process_alive(Designated)
-    of
-        true ->
-            Designated;
-        false ->
-            first_live_subscriber(maps:keys(Members), PublisherPid)
-    end.
-
-first_live_subscriber([], _PublisherPid) ->
-    undefined;
-first_live_subscriber([Pid | Remaining], PublisherPid) ->
-    case Pid =/= PublisherPid andalso is_process_alive(Pid) of
-        true -> Pid;
-        false -> first_live_subscriber(Remaining, PublisherPid)
-    end.
 
 remove_connection(Pid, State) ->
     PidMonitors = maps:get(pid_monitors, State),
@@ -308,31 +251,15 @@ remove_connection(Pid, State) ->
                 end,
                 maps:get(channels, State)
             ),
-            BusyChannels = maps:filter(
-                fun(_ChannelId, BusyPid) -> BusyPid =/= Pid end,
-                maps:get(busy_channels, State)
-            ),
             State#{
                 channels => Channels,
                 connections => maps:remove(ConnectionId, Connections),
                 connection_ids => RemainingConnectionIds,
                 monitors => maps:remove(Ref, maps:get(monitors, State)),
-                pid_monitors => RemainingPidMonitors,
-                busy_channels => BusyChannels
+                pid_monitors => RemainingPidMonitors
             }
     end.
 
 remove_channel_member(Pid, Channel) ->
     Members = maps:remove(Pid, maps:get(members, Channel)),
-    Designated =
-        case maps:get(designated, Channel) of
-            Pid -> first_member(Members);
-            Existing -> Existing
-        end,
-    Channel#{members => Members, designated => Designated}.
-
-first_member(Members) ->
-    case maps:keys(Members) of
-        [] -> undefined;
-        [Pid | _] -> Pid
-    end.
+    Channel#{members => Members}.

@@ -14,6 +14,10 @@ init(Req, _RouteState) ->
 websocket_init(_State) ->
     case connection_gateway_manager:register_connection(self()) of
         {ok, ConnectionId} ->
+            logger:info(
+                "WebSocket connected: connection_id=~p pid=~p node=~p",
+                [ConnectionId, self(), node()]
+            ),
             {ok, #{connection_id => ConnectionId}};
         {error, Reason} ->
             logger:error("Could not register WebSocket connection: ~p", [Reason]),
@@ -27,26 +31,30 @@ websocket_handle(_Frame, State) ->
 
 websocket_info({channel_message, Message}, State) ->
     {reply, {text, Message}, State};
-websocket_info({run_bad_workload, ChannelId}, State) ->
-    Checksum = connection_gateway_workload:run(),
-    connection_gateway_manager:complete_bad_workload(
-        ChannelId,
-        self(),
-        Checksum
-    ),
-    {ok, State};
 websocket_info(_Info, State) ->
     {ok, State}.
 
-terminate(_Reason, _Req, _State) ->
+terminate(TerminationReason, _Req, State) ->
+    case maps:find(connection_id, State) of
+        {ok, ConnectionId} ->
+            logger:info(
+                "WebSocket disconnected: connection_id=~p pid=~p reason=~p",
+                [ConnectionId, self(), TerminationReason]
+            );
+        error ->
+            logger:warning(
+                "WebSocket terminated before registration: pid=~p reason=~p",
+                [self(), TerminationReason]
+            )
+    end,
     try connection_gateway_manager:disconnect(self()) of
         ok ->
             ok
     catch
-        exit:Reason ->
+        exit:ManagerExitReason ->
             logger:debug(
                 "Channel manager unavailable while disconnecting WebSocket: ~p",
-                [Reason]
+                [ManagerExitReason]
             ),
             ok
     end.
@@ -87,6 +95,15 @@ handle_text_frame(Frame, State) ->
 subscribe(ChannelId, State) ->
     try connection_gateway_manager:subscribe(ChannelId, self()) of
         {ok, ConnectionId} ->
+            logger:info(
+                "WebSocket subscribed: connection_id=~p channel_id=~p manager=~p node=~p",
+                [
+                    ConnectionId,
+                    ChannelId,
+                    whereis(connection_gateway_manager),
+                    node()
+                ]
+            ),
             reply_json(
                 #{
                     <<"type">> => <<"subscribed">>,
@@ -96,6 +113,16 @@ subscribe(ChannelId, State) ->
                 State
             );
         {error, unknown_channel} ->
+            logger:warning(
+                "WebSocket subscription rejected: unknown channel "
+                "channel_id=~p connection_id=~p manager=~p node=~p",
+                [
+                    ChannelId,
+                    maps:get(connection_id, State, undefined),
+                    whereis(connection_gateway_manager),
+                    node()
+                ]
+            ),
             error_frame(<<"unknown_channel">>, State);
         {error, Reason} ->
             logger:error("Could not subscribe WebSocket: ~p", [Reason]),
@@ -123,13 +150,26 @@ publish_normal(ChannelId, Message, State) ->
     end.
 
 publish_bad(ChannelId, Message, State) ->
-    try connection_gateway_manager:publish_bad(
-        ChannelId,
-        self(),
-        Message
-    ) of
+    try connection_gateway_manager:validate_publish(ChannelId, self()) of
         ok ->
-            {ok, State};
+            _Checksum = connection_gateway_workload:run(),
+            try connection_gateway_manager:publish_bad(
+                ChannelId,
+                self(),
+                Message
+            ) of
+                ok ->
+                    {ok, State};
+                {error, Reason} ->
+                    error_frame(error_name(Reason), State)
+            catch
+                exit:Reason ->
+                    logger:error(
+                        "Channel manager unavailable during bad publish: ~p",
+                        [Reason]
+                    ),
+                    error_frame(<<"channel_manager_unavailable">>, State)
+            end;
         {error, Reason} ->
             error_frame(error_name(Reason), State)
     catch

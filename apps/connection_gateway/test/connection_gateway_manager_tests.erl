@@ -52,7 +52,7 @@ normal_publish_reaches_other_subscribers_only_test() ->
         end
     ).
 
-bad_publish_broadcasts_except_publisher_and_runs_once_test() ->
+bad_publish_broadcasts_to_other_subscribers_test() ->
     with_manager(
         fun() ->
             ok = connection_gateway_manager:create_channel(<<"stream-101">>),
@@ -81,30 +81,7 @@ bad_publish_broadcasts_except_publisher_and_runs_once_test() ->
                 <<"EXPENSIVE">>
             ),
             assert_channel_message(<<"EXPENSIVE">>),
-            receive
-                {subscriber_workload, SecondSubscriber, <<"stream-101">>} ->
-                    ok
-            after 1000 ->
-                ?assert(false)
-            end,
             assert_no_channel_message(),
-
-            ?assertEqual(
-                {error, workload_in_progress},
-                connection_gateway_manager:publish_bad(
-                    <<"stream-101">>,
-                    self(),
-                    <<"EXPENSIVE">>
-                )
-            ),
-            assert_channel_message(<<"EXPENSIVE">>),
-            assert_no_channel_message(),
-
-            connection_gateway_manager:complete_bad_workload(
-                <<"stream-101">>,
-                SecondSubscriber,
-                1
-            ),
             stop_subscriber(SecondSubscriber)
         end
     ).
@@ -153,9 +130,6 @@ subscriber_loop(Parent) ->
             ok;
         {channel_message, Encoded} ->
             Parent ! {subscriber_message, self(), Encoded},
-            subscriber_loop(Parent);
-        {run_bad_workload, ChannelId} ->
-            Parent ! {subscriber_workload, self(), ChannelId},
             subscriber_loop(Parent);
         Message ->
             Parent ! {unexpected_subscriber_message, self(), Message},

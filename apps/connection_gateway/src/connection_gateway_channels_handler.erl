@@ -69,6 +69,10 @@ decode_channel_request(Body, Req, State) ->
 create_channel_id(ChannelId, Req, State) ->
     try connection_gateway_manager:create_channel(ChannelId) of
         ok ->
+            logger:info(
+                "Channel created: channel_id=~p manager=~p node=~p",
+                [ChannelId, whereis(connection_gateway_manager), node()]
+            ),
             reply(
                 201,
                 #{
@@ -79,6 +83,10 @@ create_channel_id(ChannelId, Req, State) ->
                 State
             );
         {error, already_exists} ->
+            logger:warning(
+                "Channel creation rejected: already exists: ~p",
+                [ChannelId]
+            ),
             reply(
                 409,
                 #{<<"error">> => <<"channel_already_exists">>},
