@@ -75,7 +75,7 @@ by sending messages, which are received through the recipient's mailbox.
 Install **Erlang/OTP 27 or later** and **Rebar3**, then run:
 
 ```powershell
-git clone --branch dev https://github.com/rojamuthiah/connection-gateway.git relay_tree
+git clone --branch main https://github.com/rojamuthiah/connection-gateway.git relay_tree
 Set-Location .\relay_tree
 Copy-Item .env.example .env
 rebar3 compile

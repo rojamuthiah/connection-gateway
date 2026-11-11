@@ -93,10 +93,10 @@ The Erlang source contains two OTP applications in one Rebar3 project:
 
 ## Clone
 
-In PowerShell, clone the `dev` branch and enter the project directory:
+In PowerShell, clone the `main` branch and enter the project directory:
 
 ```powershell
-git clone --branch dev https://github.com/rojamuthiah/connection-gateway.git relay_tree
+git clone --branch main https://github.com/rojamuthiah/connection-gateway.git relay_tree
 Set-Location .\relay_tree
 ```
 
